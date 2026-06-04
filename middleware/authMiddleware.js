@@ -16,6 +16,15 @@ const protect = async (req, res, next) => {
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = await User.findById(decoded.id);
+    
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'User no longer exists' });
+    }
+
+    if (req.user.isActive === false) {
+      return res.status(403).json({ success: false, message: 'Account has been deactivated. Session terminated.' });
+    }
+
     next();
   } catch (err) {
     return res.status(401).json({ success: false, message: 'Not authorized to access this route' });

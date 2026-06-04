@@ -64,6 +64,11 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
+    // Check if account is deactivated
+    if (user.isActive === false) {
+      return res.status(403).json({ success: false, message: 'Your account has been deactivated by an administrator.' });
+    }
+
     // Check if password matches
     const isMatch = await user.matchPassword(password);
     if (!isMatch) {

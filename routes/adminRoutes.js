@@ -398,4 +398,27 @@ router.get('/users', async (req, res) => {
   }
 });
 
+// @desc    Toggle user active status
+// @route   PUT /api/v1/admin/users/:id/toggle-status
+router.put('/users/:id/toggle-status', async (req, res) => {
+  try {
+    const user = await mongoose.model('User').findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    
+    // Prevent deactivating another admin to avoid locking everyone out
+    if (user.role === 'admin') {
+      return res.status(400).json({ success: false, message: 'Cannot deactivate an admin account' });
+    }
+
+    user.isActive = !user.isActive;
+    await user.save();
+    
+    res.json({ success: true, data: { _id: user._id, isActive: user.isActive } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 module.exports = router;
