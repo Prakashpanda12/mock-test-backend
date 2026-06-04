@@ -382,4 +382,20 @@ router.post('/upload-questions', upload.single('file'), async (req, res) => {
   }
 });
 
+// @desc    Get all candidate users
+// @route   GET /api/v1/admin/users
+router.get('/users', async (req, res) => {
+  try {
+    const users = await mongoose.model('User')
+      .find({ role: 'candidate' })
+      .select('-password')
+      .sort({ createdAt: -1 })
+      .lean();
+    
+    res.json({ success: true, data: users });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 module.exports = router;

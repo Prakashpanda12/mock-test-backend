@@ -15,23 +15,6 @@ const authRoutes = require('./routes/authRoutes');
 dotenv.config();
 
 // Connect to database
-connectDB().then(async () => {
-  // Seed default admin robustly
-  await User.findOneAndUpdate(
-    { registrationNumber: 'ADMIN_001' },
-    {
-      $setOnInsert: {
-        name: 'System Admin',
-        email: 'admin@gmail.com',
-        password: 'Admin@123',
-        role: 'admin'
-      }
-    },
-    { upsert: true }
-  );
-  console.log('Default Admin check complete.');
-});
-
 const app = express();
 
 // Security middleware
@@ -69,6 +52,25 @@ app.get('/', (req, res) => {
   res.send('OSSSC CBT API is running...');
 });
 
-const PORT = process.env.PORT || 5000;
+connectDB().then(async () => {
+  // Seed default admin robustly
+  await User.findOneAndUpdate(
+    { registrationNumber: 'ADMIN_001' },
+    {
+      $setOnInsert: {
+        name: 'System Admin',
+        email: 'admin@gmail.com',
+        password: 'Admin@123',
+        role: 'admin'
+      }
+    },
+    { upsert: true }
+  );
+  console.log('Default Admin check complete.');
 
-app.listen(PORT, console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`));
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`));
+}).catch(err => {
+  console.error('Failed to start server due to database connection issue:', err.message);
+  process.exit(1);
+});
