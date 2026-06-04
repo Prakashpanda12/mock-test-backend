@@ -1,0 +1,32 @@
+const mongoose = require('mongoose');
+
+const examSchema = new mongoose.Schema({
+  examId: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  title: {
+    type: String,
+    required: true
+  },
+  durationMinutes: {
+    type: Number,
+    required: true,
+    default: 120
+  },
+  negativeMarking: {
+    type: Number,
+    default: 0.25
+  },
+  totalQuestions: {
+    type: Number,
+    required: true
+  },
+  totalMarks: {
+    type: Number,
+    required: true
+  }
+}, { timestamps: true });
+
+module.exports = mongoose.model('Exam', examSchema);
