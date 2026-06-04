@@ -135,6 +135,92 @@ router.get('/exams/:examId/progress', async (req, res) => {
   }
 });
 
+// @desc    Get leaderboard for a specific exam
+// @route   GET /api/v1/admin/exams/:examId/leaderboard
+router.get('/exams/:examId/leaderboard', async (req, res) => {
+  try {
+    const { examId } = req.params;
+    
+    // Only fetch submitted submissions
+    const submissions = await mongoose.model('Submission').find({ examId, sessionStatus: 'SUBMITTED' }).lean();
+    if (submissions.length === 0) {
+      return res.json({ success: true, data: [] });
+    }
+
+    const exam = await Exam.findOne({ examId }).lean();
+    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+
+    const questions = await Question.find({ examId }).lean();
+    
+    // Pre-map questions for fast lookup
+    const qMap = {};
+    questions.forEach(q => {
+      qMap[q._id.toString()] = {
+        correctOption: q.correctOptionIndex,
+        weight: q.weight || 1,
+        negativeMark: q.negativeMark || exam.negativeMarking
+      };
+    });
+
+    const userIds = submissions.map(s => s.userId);
+    const users = await mongoose.model('User').find({ _id: { $in: userIds } }).select('name registrationNumber').lean();
+    const userMap = {};
+    users.forEach(u => { userMap[u._id.toString()] = u; });
+
+    const leaderboardData = submissions.map(sub => {
+      let positiveMarks = 0;
+      let negativeMarks = 0;
+      let correctCount = 0;
+      let incorrectCount = 0;
+
+      sub.responses.forEach(response => {
+        const qData = qMap[response.questionId.toString()];
+        if (!qData) return;
+
+        const isAnswered = response.status === 'ANSWERED' || response.status === 'ANSWERED_AND_MARKED';
+        if (isAnswered && response.selectedOption) {
+          if (response.selectedOption === qData.correctOption) {
+            correctCount++;
+            positiveMarks += qData.weight;
+          } else {
+            incorrectCount++;
+            negativeMarks += qData.negativeMark;
+          }
+        }
+      });
+
+      const totalScore = positiveMarks - negativeMarks;
+      const user = userMap[sub.userId];
+
+      return {
+        _id: sub._id,
+        userId: sub.userId,
+        name: user?.name || 'Unknown',
+        registrationNumber: user?.registrationNumber || 'N/A',
+        totalScore,
+        correctCount,
+        incorrectCount,
+        submittedAt: sub.updatedAt
+      };
+    });
+
+    // Sort by totalScore descending, then by submittedAt ascending (faster submission wins tie)
+    leaderboardData.sort((a, b) => {
+      if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+      return new Date(a.submittedAt) - new Date(b.submittedAt);
+    });
+
+    // Assign ranks
+    leaderboardData.forEach((entry, idx) => {
+      entry.rank = idx + 1;
+    });
+
+    res.json({ success: true, data: leaderboardData });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // @desc    Get all questions for an exam
 // @route   GET /api/v1/admin/questions/:examId
 router.get('/questions/:examId', async (req, res) => {

@@ -22,7 +22,7 @@ connectDB().then(async () => {
     {
       $setOnInsert: {
         name: 'System Admin',
-        email: 'admin@osssc.gov',
+        email: 'admin@gmail.com',
         password: 'Admin@123',
         role: 'admin'
       }
@@ -38,7 +38,17 @@ const app = express();
 app.use(helmet());
 
 // Enable CORS
-app.use(cors());
+const allowedOrigins = ['http://localhost:5173', 'https://test-yari.netlify.app'];
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
 
 // Body parser
 app.use(express.json());
