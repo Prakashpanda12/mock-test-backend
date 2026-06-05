@@ -51,6 +51,26 @@ router.get('/:examId/questions', async (req, res) => {
   }
 });
 
+// Get practice questions for a specific exam (includes answers)
+router.get('/:examId/practice-questions', async (req, res) => {
+  try {
+    const { examId } = req.params;
+    const userId = req.user._id;
+
+    // Verify user has submitted this exam at least once
+    const submission = await Submission.findOne({ userId, examId, sessionStatus: 'SUBMITTED' });
+    if (!submission) {
+      return res.status(403).json({ success: false, message: 'You must complete the official exam first before practicing.' });
+    }
+
+    const questions = await Question.find({ examId }).sort({ questionNumber: 1 });
+    // For practice, we DO NOT strip out correctOptionIndex or explanation
+    res.json({ success: true, data: questions });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // Sync exam server time (for absolute timer)
 router.get('/time', (req, res) => {
   res.json({ serverTime: Date.now() });
@@ -147,26 +167,40 @@ router.get('/:examId/result', async (req, res) => {
       qMap[q._id.toString()] = {
         correctOption: q.correctOptionIndex,
         weight: q.weight || 1,
-        negativeMark: q.negativeMark || exam.negativeMarking
+        negativeMark: q.negativeMark || exam.negativeMarking,
+        subjectTag: q.subjectTag || 'General'
       };
     });
+
+    const subjects = {};
 
     submission.responses.forEach(response => {
       const qIdStr = response.questionId.toString();
       const qData = qMap[qIdStr];
       if (!qData) return;
 
+      const subject = qData.subjectTag;
+      if (!subjects[subject]) {
+        subjects[subject] = { totalQuestions: 0, correct: 0, incorrect: 0, unanswered: 0, score: 0 };
+      }
+      subjects[subject].totalQuestions++;
+
       const isAnswered = response.status === 'ANSWERED' || response.status === 'ANSWERED_AND_MARKED';
       if (isAnswered && response.selectedOption) {
         if (response.selectedOption === qData.correctOption) {
           correctCount++;
           positiveMarks += qData.weight;
+          subjects[subject].correct++;
+          subjects[subject].score += qData.weight;
         } else {
           incorrectCount++;
           negativeMarks += qData.negativeMark;
+          subjects[subject].incorrect++;
+          subjects[subject].score -= qData.negativeMark;
         }
       } else {
         unansweredCount++;
+        subjects[subject].unanswered++;
       }
     });
 
@@ -182,7 +216,8 @@ router.get('/:examId/result', async (req, res) => {
       positiveMarks,
       negativeMarks,
       totalScore,
-      submittedAt: submission.updatedAt
+      submittedAt: submission.updatedAt,
+      subjects
     };
 
     res.json({ success: true, data: scorecard });
@@ -247,7 +282,8 @@ router.get('/my-performance', async (req, res) => {
         examId: q.examId,
         correctOption: q.correctOptionIndex,
         weight: q.weight || 1,
-        negativeMark: q.negativeMark
+        negativeMark: q.negativeMark,
+        subjectTag: q.subjectTag || 'General'
       };
     });
 
@@ -257,19 +293,32 @@ router.get('/my-performance', async (req, res) => {
 
       let positiveMarks = 0;
       let negativeMarks = 0;
+      const subjects = {};
 
       sub.responses.forEach(response => {
         const qData = qMap[response.questionId.toString()];
         if (!qData) return;
 
+        const subject = qData.subjectTag;
+        if (!subjects[subject]) {
+          subjects[subject] = { totalQuestions: 0, correct: 0, incorrect: 0, unanswered: 0, score: 0 };
+        }
+        subjects[subject].totalQuestions++;
+
         const isAnswered = response.status === 'ANSWERED' || response.status === 'ANSWERED_AND_MARKED';
         if (isAnswered && response.selectedOption) {
           if (response.selectedOption === qData.correctOption) {
             positiveMarks += qData.weight;
+            subjects[subject].correct++;
+            subjects[subject].score += qData.weight;
           } else {
             const negMark = qData.negativeMark || exam.negativeMarking;
             negativeMarks += negMark;
+            subjects[subject].incorrect++;
+            subjects[subject].score -= negMark;
           }
+        } else {
+          subjects[subject].unanswered++;
         }
       });
 
@@ -282,7 +331,8 @@ router.get('/my-performance', async (req, res) => {
         examId: exam.examId,
         totalScore,
         maxMarks: exam.totalMarks,
-        submittedAt: sub.updatedAt
+        submittedAt: sub.updatedAt,
+        subjects
       };
     }).filter(Boolean);
 
