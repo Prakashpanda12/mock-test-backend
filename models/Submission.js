@@ -11,12 +11,13 @@ const submissionSchema = new mongoose.Schema({
   },
   sessionStatus: {
     type: String,
-    enum: ['ACTIVE', 'SUBMITTED', 'EXPIRED'],
+    enum: ['ACTIVE', 'PAUSED', 'SUBMITTED', 'EXPIRED'],
     default: 'ACTIVE',
   },
   timestamps: {
     startedAt: { type: Date, required: true },
     expiresAt: { type: Date, required: true },
+    pausedAt: { type: Date },
   },
   responses: [
     {
