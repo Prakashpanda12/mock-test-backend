@@ -6,6 +6,7 @@ const fs = require('fs');
 const mongoose = require('mongoose');
 const Question = require('../models/Question');
 const Exam = require('../models/Exam');
+const Organization = require('../models/Organization');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
 const upload = multer({ dest: 'uploads/' });
@@ -42,11 +43,16 @@ router.get('/exams-stats', async (req, res) => {
 // @route   POST /api/v1/admin/exams
 router.post('/exams', async (req, res) => {
   try {
-    const { examId, title, durationMinutes, negativeMarking, totalQuestions, totalMarks } = req.body;
+    const { title, durationMinutes, negativeMarking, totalQuestions, totalMarks, organization, recruitmentType, targetPosts } = req.body;
     
-    if (!examId || !title) {
-      return res.status(400).json({ success: false, message: 'Exam ID and Title are required.' });
+    if (!title) {
+      return res.status(400).json({ success: false, message: 'Exam Title is required.' });
     }
+
+    const orgPrefix = organization ? organization.toLowerCase().replace(/[^a-z0-9]+/g, '') : 'exam';
+    const baseSlug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const examId = `${orgPrefix}-${baseSlug}-${randomSuffix}`;
 
     const exam = await Exam.create({
       examId,
@@ -54,7 +60,10 @@ router.post('/exams', async (req, res) => {
       durationMinutes: parseInt(durationMinutes) || 120,
       negativeMarking: parseFloat(negativeMarking) || 0.25,
       totalQuestions: parseInt(totalQuestions) || 0,
-      totalMarks: parseInt(totalMarks) || 0
+      totalMarks: parseInt(totalMarks) || 0,
+      organization: organization || 'OSSSC',
+      recruitmentType: recruitmentType || 'General',
+      targetPosts: targetPosts || ''
     });
 
     res.status(201).json({ success: true, data: exam });
@@ -62,6 +71,37 @@ router.post('/exams', async (req, res) => {
     if (error.code === 11000) {
       return res.status(400).json({ success: false, message: 'Exam ID already exists.' });
     }
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @desc    Update an exam's metadata
+// @route   PUT /api/v1/admin/exams/:examId
+router.put('/exams/:examId', async (req, res) => {
+  try {
+    const { title, durationMinutes, negativeMarking, totalQuestions, totalMarks, organization, recruitmentType, targetPosts } = req.body;
+    
+    const exam = await Exam.findOneAndUpdate(
+      { examId: req.params.examId },
+      {
+        title,
+        durationMinutes: parseInt(durationMinutes) || 120,
+        negativeMarking: parseFloat(negativeMarking) || 0.25,
+        totalQuestions: parseInt(totalQuestions) || 0,
+        totalMarks: parseInt(totalMarks) || 0,
+        organization: organization || 'OSSSC',
+        recruitmentType: recruitmentType || 'General',
+        targetPosts: targetPosts || ''
+      },
+      { new: true }
+    );
+
+    if (!exam) {
+      return res.status(404).json({ success: false, message: 'Exam not found' });
+    }
+
+    res.json({ success: true, data: exam });
+  } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -158,7 +198,8 @@ router.get('/exams/:examId/leaderboard', async (req, res) => {
       qMap[q._id.toString()] = {
         correctOption: q.correctOptionIndex,
         weight: q.weight || 1,
-        negativeMark: q.negativeMark || exam.negativeMarking
+        negativeMark: q.negativeMark || exam.negativeMarking,
+        subjectTag: q.subjectTag || 'General'
       };
     });
 
@@ -172,19 +213,30 @@ router.get('/exams/:examId/leaderboard', async (req, res) => {
       let negativeMarks = 0;
       let correctCount = 0;
       let incorrectCount = 0;
+      const subjects = {};
 
       sub.responses.forEach(response => {
         const qData = qMap[response.questionId.toString()];
         if (!qData) return;
 
+        const subject = qData.subjectTag;
+        if (!subjects[subject]) {
+          subjects[subject] = { attempted: 0, positiveMarks: 0, negativeMarks: 0, score: 0 };
+        }
+
         const isAnswered = response.status === 'ANSWERED' || response.status === 'ANSWERED_AND_MARKED';
         if (isAnswered && response.selectedOption) {
+          subjects[subject].attempted++;
           if (response.selectedOption === qData.correctOption) {
             correctCount++;
             positiveMarks += qData.weight;
+            subjects[subject].positiveMarks += qData.weight;
+            subjects[subject].score += qData.weight;
           } else {
             incorrectCount++;
             negativeMarks += qData.negativeMark;
+            subjects[subject].negativeMarks += qData.negativeMark;
+            subjects[subject].score -= qData.negativeMark;
           }
         }
       });
@@ -200,7 +252,8 @@ router.get('/exams/:examId/leaderboard', async (req, res) => {
         totalScore,
         correctCount,
         incorrectCount,
-        submittedAt: sub.updatedAt
+        submittedAt: sub.updatedAt,
+        subjects
       };
     });
 
@@ -416,6 +469,65 @@ router.put('/users/:id/toggle-status', async (req, res) => {
     await user.save();
     
     res.json({ success: true, data: { _id: user._id, isActive: user.isActive } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ==========================================
+// MASTER DATA (ORGANIZATIONS & RECRUITMENTS)
+// ==========================================
+
+// @desc    Get all organizations and their recruitments
+// @route   GET /api/v1/admin/organizations
+router.get('/organizations', async (req, res) => {
+  try {
+    const orgs = await Organization.find().lean();
+    res.json({ success: true, data: orgs });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @desc    Create a new organization
+// @route   POST /api/v1/admin/organizations
+router.post('/organizations', async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ success: false, message: 'Organization name is required.' });
+
+    const org = await Organization.create({ name, recruitments: [] });
+    res.status(201).json({ success: true, data: org });
+  } catch (error) {
+    if (error.code === 11000) return res.status(400).json({ success: false, message: 'Organization already exists.' });
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @desc    Update organization
+// @route   PUT /api/v1/admin/organizations/:id
+router.put('/organizations/:id', async (req, res) => {
+  try {
+    const { name, recruitments } = req.body;
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (recruitments !== undefined) updateData.recruitments = recruitments;
+    
+    const org = await Organization.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    if (!org) return res.status(404).json({ success: false, message: 'Organization not found' });
+    res.json({ success: true, data: org });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @desc    Delete an organization
+// @route   DELETE /api/v1/admin/organizations/:id
+router.delete('/organizations/:id', async (req, res) => {
+  try {
+    const org = await Organization.findByIdAndDelete(req.params.id);
+    if (!org) return res.status(404).json({ success: false, message: 'Organization not found' });
+    res.json({ success: true, message: 'Organization deleted' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

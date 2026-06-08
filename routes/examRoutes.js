@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const Question = require('../models/Question');
 const Submission = require('../models/Submission');
 const Exam = require('../models/Exam');
+const Organization = require('../models/Organization');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
 // Protect all exam routes and restrict to candidates
@@ -15,6 +16,16 @@ router.get('/list', async (req, res) => {
   try {
     const exams = await Exam.find({});
     res.json({ success: true, data: exams });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get all organizations and their recruitments for filters
+router.get('/organizations', async (req, res) => {
+  try {
+    const orgs = await Organization.find().lean();
+    res.json({ success: true, data: orgs });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -26,6 +26,18 @@ const examSchema = new mongoose.Schema({
   totalMarks: {
     type: Number,
     required: true
+  },
+  organization: {
+    type: String,
+    default: 'OSSSC'
+  },
+  recruitmentType: {
+    type: String,
+    default: 'General'
+  },
+  targetPosts: {
+    type: String,
+    default: ''
   }
 }, { timestamps: true });
 
