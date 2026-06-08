@@ -89,8 +89,8 @@ router.post('/:examId/session', async (req, res) => {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + durationMinutes * 60000);
 
-    // Look for an existing ACTIVE session
-    let session = await Submission.findOne({ userId, examId, sessionStatus: 'ACTIVE' });
+    // Look for an existing ACTIVE or PAUSED session
+    let session = await Submission.findOne({ userId, examId, sessionStatus: { $in: ['ACTIVE', 'PAUSED'] } });
     let isNewSession = false;
     
     if (!session) {
@@ -102,9 +102,47 @@ router.post('/:examId/session', async (req, res) => {
         timestamps: { startedAt: now, expiresAt }
       });
       isNewSession = true;
+    } else if (session.sessionStatus === 'PAUSED') {
+      // Resume the paused session
+      const pausedAt = session.timestamps.pausedAt ? new Date(session.timestamps.pausedAt).getTime() : now.getTime();
+      const previousExpiresAt = new Date(session.timestamps.expiresAt).getTime();
+      const remainingTime = Math.max(0, previousExpiresAt - pausedAt);
+      
+      session.sessionStatus = 'ACTIVE';
+      session.timestamps.expiresAt = new Date(now.getTime() + remainingTime);
+      session.timestamps.pausedAt = undefined;
+      await session.save();
     }
 
     res.json({ success: true, data: session, isNewSession });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Pause session
+router.post('/:examId/pause', async (req, res) => {
+  try {
+    const { examId } = req.params;
+    const { userId, responses } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'Missing parameters' });
+    }
+
+    const session = await Submission.findOne({ userId, examId, sessionStatus: 'ACTIVE' });
+    if (!session) {
+      return res.status(404).json({ success: false, message: 'Active session not found' });
+    }
+
+    session.sessionStatus = 'PAUSED';
+    session.timestamps.pausedAt = new Date();
+    if (responses) {
+      session.responses = responses;
+    }
+    await session.save();
+
+    res.json({ success: true, message: 'Exam paused successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
