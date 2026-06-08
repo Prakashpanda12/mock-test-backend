@@ -42,11 +42,15 @@ router.get('/exams-stats', async (req, res) => {
 // @route   POST /api/v1/admin/exams
 router.post('/exams', async (req, res) => {
   try {
-    const { examId, title, durationMinutes, negativeMarking, totalQuestions, totalMarks } = req.body;
+    const { title, durationMinutes, negativeMarking, totalQuestions, totalMarks } = req.body;
     
-    if (!examId || !title) {
-      return res.status(400).json({ success: false, message: 'Exam ID and Title are required.' });
+    if (!title) {
+      return res.status(400).json({ success: false, message: 'Exam Title is required.' });
     }
+
+    const baseSlug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const examId = `${baseSlug}-${randomSuffix}`;
 
     const exam = await Exam.create({
       examId,
@@ -158,7 +162,8 @@ router.get('/exams/:examId/leaderboard', async (req, res) => {
       qMap[q._id.toString()] = {
         correctOption: q.correctOptionIndex,
         weight: q.weight || 1,
-        negativeMark: q.negativeMark || exam.negativeMarking
+        negativeMark: q.negativeMark || exam.negativeMarking,
+        subjectTag: q.subjectTag || 'General'
       };
     });
 
@@ -172,19 +177,30 @@ router.get('/exams/:examId/leaderboard', async (req, res) => {
       let negativeMarks = 0;
       let correctCount = 0;
       let incorrectCount = 0;
+      const subjects = {};
 
       sub.responses.forEach(response => {
         const qData = qMap[response.questionId.toString()];
         if (!qData) return;
 
+        const subject = qData.subjectTag;
+        if (!subjects[subject]) {
+          subjects[subject] = { attempted: 0, positiveMarks: 0, negativeMarks: 0, score: 0 };
+        }
+
         const isAnswered = response.status === 'ANSWERED' || response.status === 'ANSWERED_AND_MARKED';
         if (isAnswered && response.selectedOption) {
+          subjects[subject].attempted++;
           if (response.selectedOption === qData.correctOption) {
             correctCount++;
             positiveMarks += qData.weight;
+            subjects[subject].positiveMarks += qData.weight;
+            subjects[subject].score += qData.weight;
           } else {
             incorrectCount++;
             negativeMarks += qData.negativeMark;
+            subjects[subject].negativeMarks += qData.negativeMark;
+            subjects[subject].score -= qData.negativeMark;
           }
         }
       });
@@ -200,7 +216,8 @@ router.get('/exams/:examId/leaderboard', async (req, res) => {
         totalScore,
         correctCount,
         incorrectCount,
-        submittedAt: sub.updatedAt
+        submittedAt: sub.updatedAt,
+        subjects
       };
     });
 
