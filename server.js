@@ -21,7 +21,7 @@ const app = express();
 app.use(helmet());
 
 // Enable CORS
-const allowedOrigins = ['http://localhost:5173', 'https://test-yari.netlify.app'];
+const allowedOrigins = ['http://localhost:5173', 'http://localhost:8081', 'https://test-yari.netlify.app'];
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) {
