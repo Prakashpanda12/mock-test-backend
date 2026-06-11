@@ -302,6 +302,28 @@ router.put('/questions/:id', async (req, res) => {
   }
 });
 
+// @desc    Bulk delete questions
+// @route   POST /api/v1/admin/questions/bulk-delete
+router.post('/questions/bulk-delete', async (req, res) => {
+  try {
+    const { questionIds } = req.body;
+    
+    if (!questionIds || !Array.isArray(questionIds)) {
+      return res.status(400).json({ success: false, message: 'questionIds array is required' });
+    }
+
+    if (questionIds.length === 0) {
+      return res.json({ success: true, message: 'No questions deleted (empty array)' });
+    }
+
+    const result = await Question.deleteMany({ _id: { $in: questionIds } });
+    
+    res.json({ success: true, message: `Successfully deleted ${result.deletedCount} questions.` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // @desc    Delete a question
 // @route   DELETE /api/v1/admin/questions/:id
 router.delete('/questions/:id', async (req, res) => {
@@ -334,14 +356,45 @@ router.post('/upload-questions', upload.single('file'), async (req, res) => {
 
     const bulkOps = [];
     const skippedRows = [];
+    const processedQuestions = []; // To store and sort before returning
     const filePath = req.file.path;
     const isExcel = req.file.originalname.match(/\.xlsx?$/i);
+    
+    // Read a tiny bit to check if it's JSON definitively
+    const fileContentStr = fs.readFileSync(filePath, 'utf8');
+    const isJson = req.file.originalname.match(/\.json$/i) || 
+                   req.file.mimetype === 'application/json' ||
+                   fileContentStr.trim().startsWith('[') ||
+                   fileContentStr.trim().startsWith('{');
+    
+    console.log(`[Upload] file: ${req.file.originalname}, mimetype: ${req.file.mimetype}, isJson: ${!!isJson}, isExcel: ${!!isExcel}`);
 
     const processRow = (row) => {
       // Remove BOM from keys if present
       const cleanRow = {};
       for (let key in row) {
         cleanRow[key.replace(/^\uFEFF/g, '').trim()] = row[key];
+      }
+
+      // Basic heuristic for unstructured JSON
+      if (isJson) {
+        const findKey = (keywords) => {
+          const keys = Object.keys(cleanRow);
+          for (let k of keys) {
+            const lowerK = k.toLowerCase();
+            if (keywords.some(kw => lowerK.includes(kw))) return cleanRow[k];
+          }
+          return undefined;
+        };
+
+        if (!cleanRow.QuestionNumber) cleanRow.QuestionNumber = findKey(['questionnumber', 'qnum', 'id', 'no', 'num']) || Math.floor(Math.random() * 10000);
+        if (!cleanRow.Subject) cleanRow.Subject = findKey(['subject', 'topic', 'category', 'tag']) || 'General';
+        if (!cleanRow.Question_EN) cleanRow.Question_EN = findKey(['question', 'desc', 'text', 'content']);
+        if (!cleanRow.Correct_Index) cleanRow.Correct_Index = findKey(['correct', 'answer', 'ans']);
+        if (!cleanRow.Opt1_EN) cleanRow.Opt1_EN = findKey(['opt1', 'option1', 'a']);
+        if (!cleanRow.Opt2_EN) cleanRow.Opt2_EN = findKey(['opt2', 'option2', 'b']);
+        if (!cleanRow.Opt3_EN) cleanRow.Opt3_EN = findKey(['opt3', 'option3', 'c']);
+        if (!cleanRow.Opt4_EN) cleanRow.Opt4_EN = findKey(['opt4', 'option4', 'd']);
       }
 
       const qNum = parseInt(cleanRow.QuestionNumber);
@@ -373,6 +426,7 @@ router.post('/upload-questions', upload.single('file'), async (req, res) => {
         correctOptionIndex: correctIdx
       };
       
+      
       bulkOps.push({
         updateOne: {
           filter: { examId, questionNumber: qNum },
@@ -380,9 +434,53 @@ router.post('/upload-questions', upload.single('file'), async (req, res) => {
           upsert: true
         }
       });
+      processedQuestions.push(questionDoc);
     };
 
-    if (isExcel) {
+    const finalizeUpload = async () => {
+      if (bulkOps.length > 0) {
+        await Question.bulkWrite(bulkOps);
+      }
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      
+      // Sort processed questions by subject name
+      processedQuestions.sort((a, b) => {
+        const subA = a.subjectTag || '';
+        const subB = b.subjectTag || '';
+        return subA.localeCompare(subB);
+      });
+
+      return { success: true, count: bulkOps.length, skipped: skippedRows, sortedList: processedQuestions };
+    };
+
+    if (isJson) {
+      try {
+        let jsonData = JSON.parse(fileContentStr);
+        if (!Array.isArray(jsonData)) {
+          // If it's a single object, wrap in array. Or if it has a property containing an array, try to find it.
+          if (typeof jsonData === 'object') {
+            const arrValue = Object.values(jsonData).find(v => Array.isArray(v));
+            if (arrValue) jsonData = arrValue;
+            else jsonData = [jsonData];
+          } else {
+            jsonData = [];
+          }
+        }
+
+        for (const row of jsonData) {
+          try {
+            processRow(row);
+          } catch (err) {
+            console.error('Row processing error:', err.message);
+          }
+        }
+        const result = await finalizeUpload();
+        return res.status(200).json({ ...result, sampleRow: jsonData[0] });
+      } catch (err) {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        return res.status(400).json({ success: false, message: 'Invalid JSON file: ' + err.message });
+      }
+    } else if (isExcel) {
       const xlsx = require('xlsx');
       const workbook = xlsx.readFile(filePath);
       const sheetName = workbook.SheetNames[0];
@@ -398,11 +496,8 @@ router.post('/upload-questions', upload.single('file'), async (req, res) => {
         }
       }
 
-      if (bulkOps.length > 0) {
-        await Question.bulkWrite(bulkOps);
-      }
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-      return res.status(200).json({ success: true, count: bulkOps.length, skipped: skippedRows, sampleRow: rows[0] });
+      const result = await finalizeUpload();
+      return res.status(200).json({ ...result, sampleRow: rows[0] });
     } else {
       fs.createReadStream(filePath)
         .pipe(csv())
@@ -415,10 +510,8 @@ router.post('/upload-questions', upload.single('file'), async (req, res) => {
         })
         .on('end', async () => {
           try {
-            if (bulkOps.length > 0) {
-              await Question.bulkWrite(bulkOps);
-            }
-            res.status(200).json({ success: true, count: bulkOps.length });
+            const result = await finalizeUpload();
+            res.status(200).json(result);
           } catch (err) {
             console.error('Bulk write error:', err.message);
             res.status(500).json({ success: false, message: 'Database error' });
@@ -431,6 +524,94 @@ router.post('/upload-questions', upload.single('file'), async (req, res) => {
     }
   } catch (error) {
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @desc    Upload questions via JSON Playground (raw JSON body)
+// @route   POST /api/v1/admin/upload-questions-json
+router.post('/upload-questions-json', async (req, res) => {
+  const { examId, questions } = req.body;
+
+  if (!examId || !questions || !Array.isArray(questions) || questions.length === 0) {
+    return res.status(400).json({ success: false, message: 'examId and a non-empty questions array are required.' });
+  }
+
+  try {
+    const exam = await Exam.findOne({ examId });
+    if (!exam) {
+      return res.status(404).json({ success: false, message: 'Exam not found.' });
+    }
+
+    const bulkOps = [];
+    const skippedRows = [];
+    const processedQuestions = [];
+
+    for (const row of questions) {
+      try {
+        const cleanRow = { ...row };
+
+        const qNum = parseInt(cleanRow.QuestionNumber);
+        const correctIdx = parseInt(cleanRow.Correct_Index);
+
+        if (isNaN(qNum) || isNaN(correctIdx) || correctIdx < 1 || correctIdx > 4) {
+          console.warn(`[JSON Playground] Skipping invalid row: QuestionNumber=${cleanRow.QuestionNumber}, Correct_Index=${cleanRow.Correct_Index}`);
+          skippedRows.push(cleanRow);
+          continue;
+        }
+
+        const rowNegMark = cleanRow.NegativeMark ? parseFloat(cleanRow.NegativeMark) : exam.negativeMarking;
+
+        const questionDoc = {
+          examId,
+          subjectTag: cleanRow.Subject || 'General',
+          questionNumber: qNum,
+          weight: parseFloat(cleanRow.Weight) || 1.0,
+          negativeMark: rowNegMark || 0.25,
+          content: { en: cleanRow.Question_EN || '', or: cleanRow.Question_OR || '' },
+          explanation: { en: cleanRow.Explanation_EN || '', or: cleanRow.Explanation_OR || '' },
+          options: [
+            { index: 1, en: cleanRow.Opt1_EN || '', or: cleanRow.Opt1_OR || '' },
+            { index: 2, en: cleanRow.Opt2_EN || '', or: cleanRow.Opt2_OR || '' },
+            { index: 3, en: cleanRow.Opt3_EN || '', or: cleanRow.Opt3_OR || '' },
+            { index: 4, en: cleanRow.Opt4_EN || '', or: cleanRow.Opt4_OR || '' }
+          ],
+          correctOptionIndex: correctIdx
+        };
+
+        bulkOps.push({
+          updateOne: {
+            filter: { examId, questionNumber: qNum },
+            update: { $set: questionDoc },
+            upsert: true
+          }
+        });
+        processedQuestions.push(questionDoc);
+      } catch (err) {
+        console.error('[JSON Playground] Row processing error:', err.message);
+        skippedRows.push(row);
+      }
+    }
+
+    if (bulkOps.length > 0) {
+      await Question.bulkWrite(bulkOps);
+    }
+
+    // Sort processed questions by subject name
+    processedQuestions.sort((a, b) => {
+      const subA = a.subjectTag || '';
+      const subB = b.subjectTag || '';
+      return subA.localeCompare(subB);
+    });
+
+    res.status(200).json({
+      success: true,
+      count: bulkOps.length,
+      skipped: skippedRows,
+      sortedList: processedQuestions
+    });
+  } catch (error) {
+    console.error('[JSON Playground] Error:', error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
