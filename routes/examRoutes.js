@@ -5,6 +5,7 @@ const Question = require('../models/Question');
 const Submission = require('../models/Submission');
 const Exam = require('../models/Exam');
 const Organization = require('../models/Organization');
+const Bookmark = require('../models/Bookmark');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
 // Protect all exam routes and restrict to candidates
@@ -386,6 +387,63 @@ router.get('/my-performance', async (req, res) => {
     }).filter(Boolean);
 
     res.json({ success: true, data: performanceData });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ==========================================
+// BOOKMARKS / IMPORTANT QUESTIONS
+// ==========================================
+
+// @desc    Toggle bookmark on a question (add if missing, remove if exists)
+// @route   POST /api/v1/exam/bookmark
+router.post('/bookmark', async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { questionId, examId } = req.body;
+
+    if (!questionId || !examId) {
+      return res.status(400).json({ success: false, message: 'questionId and examId are required.' });
+    }
+
+    const existing = await Bookmark.findOne({ userId, questionId });
+
+    if (existing) {
+      await Bookmark.deleteOne({ _id: existing._id });
+      return res.json({ success: true, bookmarked: false, message: 'Bookmark removed.' });
+    } else {
+      await Bookmark.create({ userId, questionId, examId });
+      return res.json({ success: true, bookmarked: true, message: 'Bookmark added.' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @desc    Get all bookmarked question IDs for a specific exam
+// @route   GET /api/v1/exam/:examId/bookmarks
+router.get('/:examId/bookmarks', async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { examId } = req.params;
+
+    const bookmarks = await Bookmark.find({ userId, examId }).select('questionId').lean();
+    const questionIds = bookmarks.map(b => b.questionId.toString());
+
+    res.json({ success: true, data: questionIds });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @desc    Get all bookmarks across all exams for the user
+// @route   GET /api/v1/exam/bookmarks/all
+router.get('/bookmarks/all', async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const bookmarks = await Bookmark.find({ userId }).lean();
+    res.json({ success: true, data: bookmarks });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
