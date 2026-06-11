@@ -406,6 +406,12 @@ router.post('/upload-questions', upload.single('file'), async (req, res) => {
         return;
       }
       
+      if (!cleanRow.Question_EN || !cleanRow.Opt1_EN || !cleanRow.Opt2_EN || !cleanRow.Opt3_EN || !cleanRow.Opt4_EN) {
+        console.warn(`[Upload Warning] Skipping row missing mandatory English keys: QuestionNumber=${cleanRow.QuestionNumber}`);
+        skippedRows.push(cleanRow);
+        return;
+      }
+
       // Use exam's negative marking if omitted
       const rowNegMark = cleanRow.NegativeMark ? parseFloat(cleanRow.NegativeMark) : exam.negativeMarking;
 
@@ -415,17 +421,25 @@ router.post('/upload-questions', upload.single('file'), async (req, res) => {
         questionNumber: qNum,
         weight: parseFloat(cleanRow.Weight) || 1.0,
         negativeMark: rowNegMark || 0.25,
-        content: { en: cleanRow.Question_EN, or: cleanRow.Question_OR || "" },
-        explanation: { en: cleanRow.Explanation_EN || "", or: cleanRow.Explanation_OR || "" },
+        content: { en: cleanRow.Question_EN },
+        explanation: {},
         options: [
-          { index: 1, en: cleanRow.Opt1_EN, or: cleanRow.Opt1_OR || "" },
-          { index: 2, en: cleanRow.Opt2_EN, or: cleanRow.Opt2_OR || "" },
-          { index: 3, en: cleanRow.Opt3_EN, or: cleanRow.Opt3_OR || "" },
-          { index: 4, en: cleanRow.Opt4_EN, or: cleanRow.Opt4_OR || "" }
+          { index: 1, en: cleanRow.Opt1_EN },
+          { index: 2, en: cleanRow.Opt2_EN },
+          { index: 3, en: cleanRow.Opt3_EN },
+          { index: 4, en: cleanRow.Opt4_EN }
         ],
         correctOptionIndex: correctIdx
       };
-      
+
+      // Optionally add Odia fields
+      if (cleanRow.Question_OR) questionDoc.content.or = cleanRow.Question_OR;
+      if (cleanRow.Explanation_EN) questionDoc.explanation.en = cleanRow.Explanation_EN;
+      if (cleanRow.Explanation_OR) questionDoc.explanation.or = cleanRow.Explanation_OR;
+      if (cleanRow.Opt1_OR) questionDoc.options[0].or = cleanRow.Opt1_OR;
+      if (cleanRow.Opt2_OR) questionDoc.options[1].or = cleanRow.Opt2_OR;
+      if (cleanRow.Opt3_OR) questionDoc.options[2].or = cleanRow.Opt3_OR;
+      if (cleanRow.Opt4_OR) questionDoc.options[3].or = cleanRow.Opt4_OR;
       
       bulkOps.push({
         updateOne: {
@@ -560,6 +574,12 @@ router.post('/upload-questions-json', async (req, res) => {
           continue;
         }
 
+        if (!cleanRow.Question_EN || !cleanRow.Opt1_EN || !cleanRow.Opt2_EN || !cleanRow.Opt3_EN || !cleanRow.Opt4_EN) {
+          console.warn(`[JSON Playground] Skipping row missing mandatory English keys: QuestionNumber=${cleanRow.QuestionNumber}`);
+          skippedRows.push(cleanRow);
+          continue;
+        }
+
         const rowNegMark = cleanRow.NegativeMark ? parseFloat(cleanRow.NegativeMark) : exam.negativeMarking;
 
         const questionDoc = {
@@ -568,16 +588,24 @@ router.post('/upload-questions-json', async (req, res) => {
           questionNumber: qNum,
           weight: parseFloat(cleanRow.Weight) || 1.0,
           negativeMark: rowNegMark || 0.25,
-          content: { en: cleanRow.Question_EN || '', or: cleanRow.Question_OR || '' },
-          explanation: { en: cleanRow.Explanation_EN || '', or: cleanRow.Explanation_OR || '' },
+          content: { en: cleanRow.Question_EN },
+          explanation: {},
           options: [
-            { index: 1, en: cleanRow.Opt1_EN || '', or: cleanRow.Opt1_OR || '' },
-            { index: 2, en: cleanRow.Opt2_EN || '', or: cleanRow.Opt2_OR || '' },
-            { index: 3, en: cleanRow.Opt3_EN || '', or: cleanRow.Opt3_OR || '' },
-            { index: 4, en: cleanRow.Opt4_EN || '', or: cleanRow.Opt4_OR || '' }
+            { index: 1, en: cleanRow.Opt1_EN },
+            { index: 2, en: cleanRow.Opt2_EN },
+            { index: 3, en: cleanRow.Opt3_EN },
+            { index: 4, en: cleanRow.Opt4_EN }
           ],
           correctOptionIndex: correctIdx
         };
+
+        if (cleanRow.Question_OR) questionDoc.content.or = cleanRow.Question_OR;
+        if (cleanRow.Explanation_EN) questionDoc.explanation.en = cleanRow.Explanation_EN;
+        if (cleanRow.Explanation_OR) questionDoc.explanation.or = cleanRow.Explanation_OR;
+        if (cleanRow.Opt1_OR) questionDoc.options[0].or = cleanRow.Opt1_OR;
+        if (cleanRow.Opt2_OR) questionDoc.options[1].or = cleanRow.Opt2_OR;
+        if (cleanRow.Opt3_OR) questionDoc.options[2].or = cleanRow.Opt3_OR;
+        if (cleanRow.Opt4_OR) questionDoc.options[3].or = cleanRow.Opt4_OR;
 
         bulkOps.push({
           updateOne: {
