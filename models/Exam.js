@@ -38,6 +38,19 @@ const examSchema = new mongoose.Schema({
   targetPosts: {
     type: String,
     default: ''
+  },
+  examCategory: {
+    type: String,
+    enum: ['FULL_LENGTH', 'SECTIONAL'],
+    default: 'FULL_LENGTH'
+  },
+  sectionName: {
+    type: String,
+    default: ''
+  },
+  subSectionName: {
+    type: String,
+    default: ''
   }
 }, { timestamps: true });
 

@@ -7,6 +7,7 @@ const mongoose = require('mongoose');
 const Question = require('../models/Question');
 const Exam = require('../models/Exam');
 const Organization = require('../models/Organization');
+const SectionMaster = require('../models/SectionMaster');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
 const upload = multer({ dest: 'uploads/' });
@@ -43,7 +44,7 @@ router.get('/exams-stats', async (req, res) => {
 // @route   POST /api/v1/admin/exams
 router.post('/exams', async (req, res) => {
   try {
-    const { title, durationMinutes, negativeMarking, totalQuestions, totalMarks, organization, recruitmentType, targetPosts } = req.body;
+    const { title, durationMinutes, negativeMarking, totalQuestions, totalMarks, organization, recruitmentType, targetPosts, examCategory, sectionName, subSectionName } = req.body;
     
     if (!title) {
       return res.status(400).json({ success: false, message: 'Exam Title is required.' });
@@ -54,6 +55,14 @@ router.post('/exams', async (req, res) => {
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const examId = `${orgPrefix}-${baseSlug}-${randomSuffix}`;
 
+    let finalSubSectionName = subSectionName;
+    if (examCategory === 'SECTIONAL' && sectionName) {
+      if (!subSectionName || subSectionName.trim() === '') {
+        const count = await Exam.countDocuments({ examCategory: 'SECTIONAL', sectionName });
+        finalSubSectionName = `${sectionName}-${count + 1}`;
+      }
+    }
+
     const exam = await Exam.create({
       examId,
       title,
@@ -63,7 +72,10 @@ router.post('/exams', async (req, res) => {
       totalMarks: parseInt(totalMarks) || 0,
       organization: organization || 'OSSSC',
       recruitmentType: recruitmentType || 'General',
-      targetPosts: targetPosts || ''
+      targetPosts: targetPosts || '',
+      examCategory: examCategory || 'FULL_LENGTH',
+      sectionName: examCategory === 'SECTIONAL' ? sectionName : '',
+      subSectionName: examCategory === 'SECTIONAL' ? finalSubSectionName : ''
     });
 
     res.status(201).json({ success: true, data: exam });
@@ -79,8 +91,16 @@ router.post('/exams', async (req, res) => {
 // @route   PUT /api/v1/admin/exams/:examId
 router.put('/exams/:examId', async (req, res) => {
   try {
-    const { title, durationMinutes, negativeMarking, totalQuestions, totalMarks, organization, recruitmentType, targetPosts } = req.body;
+    const { title, durationMinutes, negativeMarking, totalQuestions, totalMarks, organization, recruitmentType, targetPosts, examCategory, sectionName, subSectionName } = req.body;
     
+    let finalSubSectionName = subSectionName;
+    if (examCategory === 'SECTIONAL' && sectionName) {
+      if (!subSectionName || subSectionName.trim() === '') {
+        const count = await Exam.countDocuments({ examCategory: 'SECTIONAL', sectionName });
+        finalSubSectionName = `${sectionName}-${count + 1}`;
+      }
+    }
+
     const exam = await Exam.findOneAndUpdate(
       { examId: req.params.examId },
       {
@@ -91,7 +111,10 @@ router.put('/exams/:examId', async (req, res) => {
         totalMarks: parseInt(totalMarks) || 0,
         organization: organization || 'OSSSC',
         recruitmentType: recruitmentType || 'General',
-        targetPosts: targetPosts || ''
+        targetPosts: targetPosts || '',
+        examCategory: examCategory || 'FULL_LENGTH',
+        sectionName: examCategory === 'SECTIONAL' ? sectionName : '',
+        subSectionName: examCategory === 'SECTIONAL' ? finalSubSectionName : ''
       },
       { new: true }
     );
@@ -737,6 +760,65 @@ router.delete('/organizations/:id', async (req, res) => {
     const org = await Organization.findByIdAndDelete(req.params.id);
     if (!org) return res.status(404).json({ success: false, message: 'Organization not found' });
     res.json({ success: true, message: 'Organization deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ==========================================
+// MASTER DATA (SECTIONS & TOPICS)
+// ==========================================
+
+// @desc    Get all sections and their topics
+// @route   GET /api/v1/admin/sections
+router.get('/sections', async (req, res) => {
+  try {
+    const sections = await SectionMaster.find().lean();
+    res.json({ success: true, data: sections });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @desc    Create a new section
+// @route   POST /api/v1/admin/sections
+router.post('/sections', async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ success: false, message: 'Section name is required.' });
+
+    const section = await SectionMaster.create({ name, topics: [] });
+    res.status(201).json({ success: true, data: section });
+  } catch (error) {
+    if (error.code === 11000) return res.status(400).json({ success: false, message: 'Section already exists.' });
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @desc    Update section
+// @route   PUT /api/v1/admin/sections/:id
+router.put('/sections/:id', async (req, res) => {
+  try {
+    const { name, topics } = req.body;
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (topics !== undefined) updateData.topics = topics;
+    
+    const section = await SectionMaster.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    if (!section) return res.status(404).json({ success: false, message: 'Section not found' });
+    res.json({ success: true, data: section });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @desc    Delete a section
+// @route   DELETE /api/v1/admin/sections/:id
+router.delete('/sections/:id', async (req, res) => {
+  try {
+    const section = await SectionMaster.findByIdAndDelete(req.params.id);
+    if (!section) return res.status(404).json({ success: false, message: 'Section not found' });
+    res.json({ success: true, message: 'Section deleted' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
