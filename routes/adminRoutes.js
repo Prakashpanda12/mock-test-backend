@@ -58,8 +58,19 @@ router.post('/exams', async (req, res) => {
     let finalSubSectionName = subSectionName;
     if (examCategory === 'SECTIONAL' && sectionName) {
       if (!subSectionName || subSectionName.trim() === '') {
-        const count = await Exam.countDocuments({ examCategory: 'SECTIONAL', sectionName });
-        finalSubSectionName = `${sectionName}-${count + 1}`;
+        const lastExam = await Exam.findOne({ examCategory: 'SECTIONAL', sectionName }).sort({ createdAt: -1 });
+        if (lastExam && lastExam.subSectionName) {
+          const prevName = lastExam.subSectionName;
+          const match = prevName.match(/^(.*)-(\d+)$/);
+          if (match) {
+            finalSubSectionName = `${match[1]}-${parseInt(match[2], 10) + 1}`;
+          } else {
+            finalSubSectionName = `${prevName}-2`;
+          }
+        } else {
+          const count = await Exam.countDocuments({ examCategory: 'SECTIONAL', sectionName });
+          finalSubSectionName = `${sectionName}-${count + 1}`;
+        }
       }
     }
 
@@ -87,6 +98,38 @@ router.post('/exams', async (req, res) => {
   }
 });
 
+// @desc    Bulk update subSectionName for sectional exams
+// @route   PUT /api/v1/admin/exams/bulk-update-subtopic
+router.put('/exams/bulk-update-subtopic', async (req, res) => {
+  try {
+    const { sectionName, oldSubTopicName, newSubTopicName } = req.body;
+    
+    if (!sectionName || !oldSubTopicName || !newSubTopicName) {
+      return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+
+    // Also update any titles that follow the pattern "OldName - Set N" to "NewName - Set N"
+    const examsToUpdate = await Exam.find({ examCategory: 'SECTIONAL', sectionName, subSectionName: oldSubTopicName });
+    
+    let modifiedCount = 0;
+    for (const exam of examsToUpdate) {
+      let newTitle = exam.title;
+      // If the title starts with the old subtopic name, replace it with the new one
+      if (exam.title.startsWith(oldSubTopicName)) {
+        newTitle = newTitle.replace(oldSubTopicName, newSubTopicName);
+      }
+      exam.subSectionName = newSubTopicName;
+      exam.title = newTitle;
+      await exam.save();
+      modifiedCount++;
+    }
+
+    res.json({ success: true, message: `Updated ${modifiedCount} sets in this sub topic.` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // @desc    Update an exam's metadata
 // @route   PUT /api/v1/admin/exams/:examId
 router.put('/exams/:examId', async (req, res) => {
@@ -96,8 +139,19 @@ router.put('/exams/:examId', async (req, res) => {
     let finalSubSectionName = subSectionName;
     if (examCategory === 'SECTIONAL' && sectionName) {
       if (!subSectionName || subSectionName.trim() === '') {
-        const count = await Exam.countDocuments({ examCategory: 'SECTIONAL', sectionName });
-        finalSubSectionName = `${sectionName}-${count + 1}`;
+        const lastExam = await Exam.findOne({ examCategory: 'SECTIONAL', sectionName }).sort({ createdAt: -1 });
+        if (lastExam && lastExam.subSectionName) {
+          const prevName = lastExam.subSectionName;
+          const match = prevName.match(/^(.*)-(\d+)$/);
+          if (match) {
+            finalSubSectionName = `${match[1]}-${parseInt(match[2], 10) + 1}`;
+          } else {
+            finalSubSectionName = `${prevName}-2`;
+          }
+        } else {
+          const count = await Exam.countDocuments({ examCategory: 'SECTIONAL', sectionName });
+          finalSubSectionName = `${sectionName}-${count + 1}`;
+        }
       }
     }
 
@@ -800,12 +854,49 @@ router.post('/sections', async (req, res) => {
 router.put('/sections/:id', async (req, res) => {
   try {
     const { name, topics } = req.body;
-    const updateData = {};
-    if (name !== undefined) updateData.name = name;
-    if (topics !== undefined) updateData.topics = topics;
     
-    const section = await SectionMaster.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    const section = await SectionMaster.findById(req.params.id);
     if (!section) return res.status(404).json({ success: false, message: 'Section not found' });
+
+    const oldName = section.name;
+    let oldTopicName = null;
+    let newTopicName = null;
+
+    if (name !== undefined) {
+      section.name = name;
+    }
+    
+    if (topics !== undefined) {
+      const oldTopicNames = section.topics.map(t => t.name);
+      const newTopicNames = topics.map(t => t.name);
+      
+      const removedTopics = oldTopicNames.filter(n => !newTopicNames.includes(n));
+      const addedTopics = newTopicNames.filter(n => !oldTopicNames.includes(n));
+      
+      if (removedTopics.length === 1 && addedTopics.length === 1) {
+        oldTopicName = removedTopics[0];
+        newTopicName = addedTopics[0];
+      }
+      section.topics = topics;
+    }
+    
+    await section.save();
+
+    // Cascade update to Exam collection
+    if (name !== undefined && name !== oldName) {
+      await Exam.updateMany(
+        { sectionName: oldName },
+        { $set: { sectionName: name } }
+      );
+    }
+
+    if (oldTopicName && newTopicName) {
+      await Exam.updateMany(
+        { sectionName: section.name, subSectionName: oldTopicName },
+        { $set: { subSectionName: newTopicName } }
+      );
+    }
+
     res.json({ success: true, data: section });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
