@@ -12,11 +12,58 @@ const { protect, authorize } = require('../middleware/authMiddleware');
 router.use(protect);
 router.use(authorize('candidate'));
 
-// Get list of all available exams
-router.get('/list', async (req, res) => {
+// Get all full-length exams
+router.get('/full-length', async (req, res) => {
   try {
-    const exams = await Exam.find({});
+    const exams = await Exam.find({ examCategory: { $ne: 'SECTIONAL' } }).lean();
     res.json({ success: true, data: exams });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get structured sectional exams
+router.get('/sectional', async (req, res) => {
+  try {
+    const exams = await Exam.find({ examCategory: 'SECTIONAL' }).lean();
+    
+    // Structure: [ { sectionName: '...', topics: [ { topicName: '...', exams: [...] } ] } ]
+    const sectionMap = new Map();
+    
+    exams.forEach(exam => {
+      const secName = exam.sectionName || 'Uncategorized';
+      const topName = exam.subSectionName || 'General';
+      
+      if (!sectionMap.has(secName)) {
+        sectionMap.set(secName, new Map());
+      }
+      const topicMap = sectionMap.get(secName);
+      
+      if (!topicMap.has(topName)) {
+        topicMap.set(topName, []);
+      }
+      topicMap.get(topName).push(exam);
+    });
+
+    // Convert Maps to Arrays and sort
+    const structuredData = Array.from(sectionMap.keys()).sort((a, b) => a.localeCompare(b)).map(secName => {
+      const topicMap = sectionMap.get(secName);
+      const topics = Array.from(topicMap.keys()).sort((a, b) => a.localeCompare(b)).map(topName => {
+        const sortedExams = topicMap.get(topName).sort((a, b) => 
+          a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })
+        );
+        return {
+          topicName: topName,
+          exams: sortedExams
+        };
+      });
+      return {
+        sectionName: secName,
+        topics
+      };
+    });
+
+    res.json({ success: true, data: structuredData });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
