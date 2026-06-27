@@ -8,6 +8,8 @@ const Question = require('../models/Question');
 const Exam = require('../models/Exam');
 const Organization = require('../models/Organization');
 const SectionMaster = require('../models/SectionMaster');
+const Submission = require('../models/Submission');
+const User = require('../models/User');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
 const upload = multer({ dest: 'uploads/' });
@@ -37,6 +39,73 @@ router.get('/exams-stats', async (req, res) => {
     res.json({ success: true, data: stats });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @desc    Get global analytics (platform-wide stats & leaderboards)
+// @route   GET /api/v1/admin/global-analytics
+router.get('/global-analytics', async (req, res) => {
+  try {
+    const totalCandidates = await User.countDocuments({ role: 'candidate', isActive: true });
+    const totalExamsTaken = await Submission.countDocuments({ sessionStatus: 'SUBMITTED' });
+
+    // Global Leaderboard (Top candidates by total score across all exams)
+    const leaderboardRaw = await Submission.aggregate([
+      { $match: { sessionStatus: 'SUBMITTED' } },
+      { $group: { _id: '$userId', totalScore: { $sum: '$totalScore' }, examsTaken: { $sum: 1 }, avgAccuracy: { $avg: '$accuracy' } } },
+      { $sort: { totalScore: -1 } },
+      { $limit: 20 }
+    ]);
+
+    // Populate user details manually since userId is a string
+    const userIds = leaderboardRaw.map(l => l._id);
+    const users = await User.find({ _id: { $in: userIds } }).select('name email registrationNumber');
+    const userMap = users.reduce((acc, u) => {
+      acc[u._id.toString()] = u;
+      return acc;
+    }, {});
+
+    const leaderboard = leaderboardRaw.map((entry, index) => ({
+      rank: index + 1,
+      userId: entry._id,
+      totalScore: entry.totalScore,
+      examsTaken: entry.examsTaken,
+      avgAccuracy: entry.avgAccuracy,
+      user: userMap[entry._id] || { name: 'Unknown User' }
+    }));
+
+    // Popular Exams
+    const popularExamsRaw = await Submission.aggregate([
+      { $match: { sessionStatus: 'SUBMITTED' } },
+      { $group: { _id: '$examId', attempts: { $sum: 1 } } },
+      { $sort: { attempts: -1 } },
+      { $limit: 10 }
+    ]);
+
+    const examIds = popularExamsRaw.map(p => p._id);
+    const exams = await Exam.find({ examId: { $in: examIds } }).select('examId title sectionName subSectionName');
+    const examMap = exams.reduce((acc, e) => {
+      acc[e.examId] = e;
+      return acc;
+    }, {});
+
+    const popularExams = popularExamsRaw.map(entry => ({
+      examId: entry._id,
+      attempts: entry.attempts,
+      exam: examMap[entry._id] || { title: entry._id }
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        quickStats: { totalCandidates, totalExamsTaken },
+        leaderboard,
+        popularExams
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching global analytics:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
